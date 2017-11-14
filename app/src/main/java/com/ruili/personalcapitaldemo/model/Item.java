@@ -11,14 +11,14 @@ import android.graphics.Bitmap;
  */
 public class Item {
     private String title;
-    private Bitmap imageBitmap;
+    private String imageUrl;
     private String description;
     private String pubDate;
     private String link;
 
-    public Item(String title, Bitmap imageBitmap, String description, String pubDate, String link) {
+    public Item(String title, String imageUrl, String description, String pubDate, String link) {
         this.title = title;
-        this.imageBitmap = imageBitmap;
+        this.imageUrl = imageUrl;
         this.description = description;
         this.pubDate = pubDate;
         this.link = link;
@@ -28,8 +28,8 @@ public class Item {
         return title;
     }
 
-    public Bitmap getImageBitmap() {
-        return imageBitmap;
+    public String getImageUrl() {
+        return imageUrl;
     }
 
     public String getDescription() {

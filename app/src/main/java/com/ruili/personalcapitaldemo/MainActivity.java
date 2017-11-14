@@ -1,9 +1,13 @@
 package com.ruili.personalcapitaldemo;
 
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
@@ -28,6 +32,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TableLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.ruili.personalcapitaldemo.adapter.ItemRecyclerViewAdapter;
 import com.ruili.personalcapitaldemo.model.Item;
@@ -39,6 +44,9 @@ import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -52,7 +60,7 @@ import javax.net.ssl.HttpsURLConnection;
 import static android.text.Html.FROM_HTML_MODE_COMPACT;
 
 /*
- * Created by Rui Li on DEFAULT_PADDING/29/17.
+ * Created by Rui Li on 10/29/17.
  */
 
 public class MainActivity extends AppCompatActivity {
@@ -73,6 +81,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView firstTvSummary;
 
     private RetainedFragment retainedFragment;
+    private ProgressBar progressBar;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,7 +89,7 @@ public class MainActivity extends AppCompatActivity {
 
         int screenWidthPx = getResources().getDisplayMetrics().widthPixels;
 
-        ProgressBar progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
+        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
         FrameLayout.LayoutParams progressBarLayoutParams = new FrameLayout.LayoutParams(screenWidthPx / 4, screenWidthPx / 4);
         progressBarLayoutParams.gravity = Gravity.CENTER_HORIZONTAL | Gravity.CENTER_VERTICAL;
         progressBar.setLayoutParams(progressBarLayoutParams);
@@ -98,7 +107,8 @@ public class MainActivity extends AppCompatActivity {
         firstItemLayout = new LinearLayout(this);
         firstItemLayout.setOrientation(LinearLayout.VERTICAL);
         firstItemLayout.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-        firstItemLayout.setBackground(getDrawable(R.drawable.bg_gray_rectangle));
+        Drawable bgDrawable = Utilities.getGrayFrameBackground();
+        firstItemLayout.setBackground(bgDrawable);
         firstImageView = new ImageView(this);
         firstImageView.setAdjustViewBounds(true);
         firstTvTitle = new TextView(this);
@@ -126,9 +136,9 @@ public class MainActivity extends AppCompatActivity {
         recyclerView.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
         recyclerView.setPadding(DEFAULT_PADDING, DEFAULT_PADDING, DEFAULT_PADDING, DEFAULT_PADDING);
         recyclerView.addItemDecoration(new RecyclerViewItemDecoration(DEFAULT_PADDING));
-        recyclerView.setNestedScrollingEnabled(false);
         itemRecyclerViewAdapter = new ItemRecyclerViewAdapter(this, mItemList);
         recyclerView.setAdapter(itemRecyclerViewAdapter);
+        recyclerView.setNestedScrollingEnabled(false);
 
         float sceenWidthDp = Utilities.pxToDp(this, screenWidthPx);
         // a typical 7' tablet has a width of 600dp
@@ -173,15 +183,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // populate view for first article(item)
-    public void addFirstItem(final Item item) {
+    public void addItems(List<Item> items) {
+        if (items.size() <= 0) {
+            return;
+        }
+
         setContentView(scrollView);
 
-        firstImageView.setImageBitmap(item.getImageBitmap());
-        firstTvTitle.setText(item.getTitle());
+        final Item firstItem = items.get(0);
+        new LoadImageIconAsyncTask(firstImageView, firstItem.getImageUrl()).execute();
+        firstTvTitle.setText(firstItem.getTitle());
 
         StringBuilder descStringBuilder = new StringBuilder();
 
-        String pubDate = item.getPubDate();
+        String pubDate = firstItem.getPubDate();
         SimpleDateFormat originalFormat = new SimpleDateFormat("EEE, d MMM yyyy HH:mm:ss Z", Locale.getDefault());
         SimpleDateFormat dateFormat = new SimpleDateFormat("MMM dd, yyyy", Locale.getDefault());
         try {
@@ -195,7 +210,7 @@ public class MainActivity extends AppCompatActivity {
             e.printStackTrace();
         }
 
-        descStringBuilder.append(item.getDescription().replaceFirst("<p>", "").replaceFirst("</p>", ""));
+        descStringBuilder.append(firstItem.getDescription().replaceFirst("<p>", "").replaceFirst("</p>", ""));
 
         if (Build.VERSION.SDK_INT >= 24) {
             firstTvSummary.setText(Html.fromHtml(descStringBuilder.toString(), FROM_HTML_MODE_COMPACT));
@@ -207,17 +222,16 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View v) {
                 Intent intent = new Intent(MainActivity.this, WebViewActivity.class);
-                intent.putExtra("url", item.getLink());
-                intent.putExtra("title", item.getTitle());
+                intent.putExtra("url", firstItem.getLink());
+                intent.putExtra("title", firstItem.getTitle());
                 startActivity(intent);
             }
         });
-    }
 
-    // populate views for other articles(items)
-    public void addOtherItems(List<Item> items) {
-        mItemList.addAll(items);
-        itemRecyclerViewAdapter.notifyDataSetChanged();
+        if (items.size() > 1) {
+            mItemList.addAll(items.subList(1, items.size()));
+            itemRecyclerViewAdapter.notifyDataSetChanged();
+        }
     }
 
     /**
@@ -239,12 +253,7 @@ public class MainActivity extends AppCompatActivity {
     public static class RetainedFragment extends Fragment {
         // keep a reference of MainActivity
         private MainActivity mainActivity;
-
-        // keep a reference of the first item
-        private Item firstItem;
-
-        // keep a reference of other items
-        private List<Item> otherItems = new ArrayList<>();
+        private List<Item> itemList = new ArrayList<>();
 
         @Override
         public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -265,9 +274,8 @@ public class MainActivity extends AppCompatActivity {
              * otherwise it's likely that a configuration change just happened and we
              * just need to fill the data that we already have
              */
-            if (firstItem != null) {
-                mainActivity.addFirstItem(firstItem);
-                mainActivity.addOtherItems(otherItems);
+            if (itemList.size() > 0) {
+                mainActivity.addItems(itemList);
             } else {
                 loadRssFeed();
             }
@@ -287,18 +295,29 @@ public class MainActivity extends AppCompatActivity {
          * This method will execute an asynctask that parse and load data
          */
         void loadRssFeed() {
-            firstItem = null;
-            otherItems.clear();
+            itemList.clear();
 
             new LoadRssFeedAsyncTask().execute();
         }
 
         class LoadRssFeedAsyncTask extends AsyncTask<Void, Item, Void> {
-            // this flag helps us determine whether it's loading the first article or others
-            boolean isFirstItem = true;
+            private boolean connected = true;
+
+            @Override
+            protected void onPreExecute() {
+                super.onPreExecute();
+            }
 
             @Override
             protected Void doInBackground(Void... params) {
+                ConnectivityManager connectivityManager
+                        = (ConnectivityManager) getActivity().getSystemService(Context.CONNECTIVITY_SERVICE);
+                NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
+               if (activeNetworkInfo == null || !activeNetworkInfo.isConnected()) {
+                    connected = false;
+                    return null;
+               }
+
                 InputStream inputStream = null;
                 try {
                     URL url = new URL("https://blog.personalcapital.com/feed/?cat=3,891,890,68,284");
@@ -357,18 +376,16 @@ public class MainActivity extends AppCompatActivity {
                             }
                         }
 
-                        Bitmap bitmap = Utilities.getBitmapFromURL(imageUrl);
-                        if (bitmap == null) {
-                            bitmap = ((BitmapDrawable) (getActivity().getDrawable(R.drawable.ic_refresh_white_24dp))).getBitmap();
-                        }
-
-                        // construct article item on the go
-                        Item item = new Item(title, bitmap, description, pubDate, link);
-                        publishProgress(item);
-
+                        itemList.add(new Item(title, imageUrl, description, pubDate, link));
                     }
-                } catch (IOException | XmlPullParserException e) {
+
+
+                } catch (XmlPullParserException|ProtocolException|MalformedURLException e) {
                     Log.e(TAG, e.getMessage());
+                } catch (SocketTimeoutException e) {
+                    connected = false;
+                } catch (IOException e) {
+                    e.printStackTrace();
                 } finally {
                     if (inputStream != null) {
                         try {
@@ -383,32 +400,54 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            protected void onProgressUpdate(Item... values) {
-                super.onProgressUpdate(values);
-
-                if (values != null && values.length > 0) {
-
-                    // if first item, call addFirstItem of MainActivity
-                    if (isFirstItem) {
-                        firstItem = values[0];
-
-                        if (mainActivity != null) {
-                            mainActivity.addFirstItem(firstItem);
-                        }
-
-                        isFirstItem = false;
-                    } else {
-                        otherItems.add(values[0]);
-
-                        if (mainActivity != null) {
-                            List<Item> list = new ArrayList<>();
-                            list.add(values[0]);
-
-                            mainActivity.addOtherItems(list);
-                        }
+            protected void onPostExecute(Void aVoid) {
+                if (connected) {
+                    if (itemList.size() > 0 && mainActivity != null) {
+                        mainActivity.addItems(itemList);
+                    }
+                } else {
+                    if (mainActivity != null) {
+                        mainActivity.onHttpCallFailed();
                     }
                 }
+                super.onPostExecute(aVoid);
             }
+        }
+    }
+
+    private void onHttpCallFailed() {
+        Toast.makeText(this, "Unable to connect", Toast.LENGTH_LONG).show();
+        progressBar.setVisibility(View.GONE);
+    }
+
+    private static class LoadImageIconAsyncTask extends AsyncTask{
+        private ImageView imageView;
+        private String url;
+        private Bitmap bitmap;
+
+        LoadImageIconAsyncTask(ImageView imageView, String url) {
+            this.imageView = imageView;
+            this.url = url;
+        }
+
+        @Override
+        protected Object doInBackground(Object[] params) {
+            BitmapFactory.Options bmOptions = new BitmapFactory.Options();
+            bmOptions.inSampleSize = 1;
+            try {
+                bitmap = BitmapFactory.decodeStream((InputStream)new URL(url).getContent(),
+                        null, bmOptions);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return null;
+        }
+
+        @Override
+        protected void onPostExecute(Object o) {
+            imageView.setImageBitmap(bitmap);
+
+            super.onPostExecute(o);
         }
     }
 }
